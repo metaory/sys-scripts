@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+
+trap 'tput cnorm; printf "\e[0m\e[2J"; exit' INT TERM EXIT
+
+tput civis
+printf '\e[2J'
+
+colors=(
+  46   # green
+  82
+  118
+  154
+  190
+  226  # yellow
+  220
+  214
+  208
+  202
+  196  # red
+)
+
+for ((i=1;; i++)); do
+  rows=$(tput lines)
+  cols=$(tput cols)
+
+  # faster escalation
+  idx=$(( (i - 1) / 2 ))
+  (( idx >= ${#colors[@]} )) && idx=$((${#colors[@]} - 1))
+
+  text="$i"
+  color=${colors[idx]}
+
+  y=$(( rows / 2 ))
+  x=$(( (cols - ${#text}) / 2 ))
+
+  printf '\e[2J'
+  tput cup "$y" "$x"
+
+  printf '\e[1;5;38;5;%sm%s\e[0m' "$color" "$text"
+
+  sleep 1
+done

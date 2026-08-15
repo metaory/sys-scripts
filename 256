@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -u
+
+cols="$(tput cols 2>/dev/null || printf '80')"
+
+# Visible content per item is exactly 4 chars: "%3d " (e.g. " 12 ")
+item_w=4
+gap=" "         # 1 space between items
+gap_w=1
+
+per_row=$(( cols / (item_w + gap_w) ))
+(( per_row < 1 )) && per_row=1
+
+for ((i=0; i<256; i++)); do
+  # color + exactly one trailing space inside the item
+  printf '\e[38;5;%sm%3d \e[0m' "$i" "$i"
+
+  if (( (i + 1) % per_row == 0 )); then
+    printf '\n'
+  else
+    printf '%s' "$gap"
+  fi
+done
+
+(( 256 % per_row != 0 )) && printf '\n'

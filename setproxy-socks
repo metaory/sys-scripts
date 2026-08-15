@@ -1,0 +1,28 @@
+#!/bin/zsh
+
+export PROXY_PORT=10808
+export PROXY_HOST=$(ip -color=never -4 route get 1 | awk 'NR==1 {print $3}')
+
+if [[ -n "$PROXY_HOST" ]]; then
+  export ALL_PROXY="socks5h://$PROXY_HOST:$PROXY_PORT"
+  export {http,https,all}_proxy="$ALL_PROXY"
+  export {HTTP,HTTPS,ALL}_PROXY="$ALL_PROXY"
+
+  git config --global http.proxy "$ALL_PROXY"
+
+  # env -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
+  #   npm config set proxy "http://$PROXY_HOST:10809"
+  
+  # env -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
+  #   npm config set https-proxy "http://$PROXY_HOST:10809"
+
+  # pnpm config set proxy "http://$PROXY_HOST:10809"
+  # pnpm config set https-proxy "http://$PROXY_HOST:10809"
+
+  echo "Proxy set to $ALL_PROXY"
+else
+  unset {http,https,all}_proxy {HTTP,HTTPS,ALL}_PROXY
+  git config --global --unset http.proxy 2>/dev/null
+  npm config delete proxy 2>/dev/null
+  npm config delete https-proxy 2>/dev/null
+fi

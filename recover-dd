@@ -1,0 +1,225 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+
+NAME=hdd-recover
+OUT=/dev/mapper/$NAME
+DRY=
+MAPPED=
+
+[[ ${1-} == -n || ${1-} == --dry-run ]] && {
+  DRY=1
+  shift
+}
+
+usage() {
+  printf '%s\n' \
+    "Usage: recover-dd [--dry-run] ACTION ..." \
+    "  first SOURCE SSD1 SSD2 MAP" \
+    "  retry SOURCE SSD1 SSD2 MAP [1-3]" \
+    "  mark SSD1 SSD2 MAP" \
+    "  open SSD1 SSD2 MAP" \
+    "  mount CLONE_DEVICE MOUNTPOINT" \
+    "  scan MOUNTPOINT MAP" \
+    "  close"
+  exit 2
+}
+
+die() {
+  printf 'recover-dd: %s\n' "$*" >&2
+  exit 1
+}
+need() { command -v "$1" >/dev/null || die "missing command: $1"; }
+root() { ((EUID == 0)) || die "run as root"; }
+run() {
+  printf '+ '
+  printf '%q ' "$@"
+  printf '\n'
+  [[ $DRY ]] || "$@"
+}
+optional() { run "$@" || :; }
+cleanup() { [[ -z $MAPPED ]] || dmsetup remove "$NAME" || :; }
+trap cleanup EXIT
+
+device_id() {
+  local serial wwn
+  read -r serial wwn < <(lsblk -dnro SERIAL,WWN "$1") || :
+  [[ $serial$wwn ]] || die "no stable serial or WWN for $1"
+  printf '%s|%s|%s' "$(blockdev --getsz "$1")" "$serial" "$wwn"
+}
+
+check_disk() {
+  [[ -b $1 ]] || die "not a block device: $1"
+  [[ $(lsblk -dnro TYPE "$1") == disk ]] || die "not a whole disk: $1"
+  [[ -z $(lsblk -nrpo MOUNTPOINTS "$1") ]] || die "disk or child is mounted: $1"
+  [[ -z $(lsblk -nrpo TYPE "$1" | awk 'NR > 1 && $1 != "part" { print; exit }') ]] ||
+    die "disk has an active holder: $1"
+}
+
+load_meta() {
+  [[ -r $META ]] || die "missing device record: $META"
+  mapfile -t ROWS <"$META"
+  ((${#ROWS[@]} == 3)) || die "invalid device record: $META"
+  IFS=$'\t' read -r _ SRC_SECTORS SRC_ID <<<"${ROWS[0]}"
+  IFS=$'\t' read -r _ D1_SECTORS D1_ID <<<"${ROWS[1]}"
+  IFS=$'\t' read -r _ D2_SECTORS D2_ID <<<"${ROWS[2]}"
+  [[ $(device_id "$D1") == "$D1_ID" ]] || die "SSD1 identity or size changed"
+  [[ $(device_id "$D2") == "$D2_ID" ]] || die "SSD2 identity or size changed"
+}
+
+write_meta() {
+  printf 'SOURCE\t%s\t%s\nSSD1\t%s\t%s\nSSD2\t%s\t%s\n' \
+    "$SRC_SECTORS" "$(device_id "$SRC")" \
+    "$D1_SECTORS" "$(device_id "$D1")" \
+    "$D2_SECTORS" "$(device_id "$D2")" >"$META.tmp"
+  mv "$META.tmp" "$META"
+}
+
+setup_map() {
+  dmsetup info "$NAME" >/dev/null 2>&1 && die "$OUT already exists"
+  local first=$((SRC_SECTORS < D1_SECTORS ? SRC_SECTORS : D1_SECTORS))
+  local rest=$((SRC_SECTORS - first))
+  local ro=${READONLY:+--readonly}
+  ((rest <= D2_SECTORS)) || die "combined SSD capacity is too small"
+  if [[ $DRY ]]; then
+    printf '+ dmsetup create %q %s using %s sectors from %q and %s from %q\n' \
+      "$NAME" "$ro" "$first" "$D1" "$rest" "$D2"
+    return
+  fi
+  {
+    printf '0 %s linear %s 0\n' "$first" "$D1"
+    ((rest == 0)) || printf '%s %s linear %s 0\n' "$first" "$rest" "$D2"
+  } | dmsetup create "$NAME" ${ro:+"$ro"}
+  MAPPED=1
+}
+
+complete_map() {
+  ddrescuelog -t "$MAP" >/dev/null
+  awk '$1 ~ /^0x/ && $2 ~ /^0x/ && $3 != "+" && $3 != "-" { exit 1 }' "$MAP" ||
+    die "rescue is unfinished; run retry first"
+}
+
+clone_device() {
+  lsblk -srno NAME "$1" | grep -qx "$NAME" || die "$1 is not backed by $OUT"
+}
+
+prepare() {
+  root
+  for cmd in awk lsblk blockdev dmsetup ddrescue ddrescuelog; do need "$cmd"; done
+  check_disk "$D1"
+  check_disk "$D2"
+  [[ $(readlink -f "$D1") != "$(readlink -f "$D2")" ]] || die "SSDs are identical"
+  [[ $(device_id "$D1") != "$(device_id "$D2")" ]] || die "SSDs lack distinct identities"
+  META=$MAP.devices
+}
+
+ACTION=${1-}
+shift || :
+
+case $ACTION in
+first | retry)
+  [[ $ACTION == first && $# == 4 ||
+    $ACTION == retry && ($# == 4 || $# == 5) ]] || usage
+  SRC=$1 D1=$2 D2=$3 MAP=$4 META=$4.devices
+  check_disk "$SRC"
+  prepare
+  [[ $(readlink -f "$SRC") != "$(readlink -f "$D1")" &&
+  $(readlink -f "$SRC") != "$(readlink -f "$D2")" ]] || die "source is an SSD"
+  SRC_SECTORS=$(blockdev --getsz "$SRC")
+  D1_SECTORS=$(blockdev --getsz "$D1")
+  D2_SECTORS=$(blockdev --getsz "$D2")
+  ((SRC_SECTORS <= D1_SECTORS + D2_SECTORS)) ||
+    die "combined SSD capacity is too small"
+  if [[ -e $META ]]; then
+    load_meta
+    [[ $(device_id "$SRC") == "$SRC_ID" ]] || die "source identity or size changed"
+    [[ -e $MAP || $ACTION == first ]] || die "missing mapfile: $MAP"
+  else
+    [[ ! -e $MAP ]] || die "mapfile exists without its device record"
+    lsblk -dnbo NAME,SIZE,MODEL,SERIAL,WWN "$SRC" "$D1" "$D2"
+    if [[ -z $DRY ]]; then
+      read -r -p "Type ERASE $D1 $D2: " answer
+      [[ $answer == "ERASE $D1 $D2" ]] || die "confirmation failed"
+      write_meta
+    fi
+  fi
+  setup_map
+  if [[ $ACTION == first ]]; then
+    run ddrescue -f -n "$SRC" "$OUT" "$MAP"
+    exit
+  fi
+  PASSES=${5-1}
+  [[ $PASSES =~ ^[1-3]$ ]] || die "retry passes must be 1 to 3"
+  run ddrescue -d -f -r"$PASSES" -b "$(blockdev --getss "$SRC")" \
+    "$SRC" "$OUT" "$MAP"
+  ;;
+mark | open)
+  (($# == 3)) || usage
+  D1=$1 D2=$2 MAP=$3
+  [[ $ACTION == open ]] && READONLY=1
+  prepare
+  load_meta
+  complete_map
+  setup_map
+  MARKER=$MAP.marker
+  if [[ $ACTION == mark ]]; then
+    if [[ ! -s $MARKER ]]; then
+      VALUE=DDRESCUE_BAD_$(</proc/sys/kernel/random/uuid)
+      [[ $DRY ]] && printf '+ printf marker > %q\n' "$MARKER" ||
+        printf '%s' "$VALUE" >"$MARKER"
+    fi
+    run ddrescue --fill-mode=- -f "$MARKER" "$OUT" "$MAP"
+    exit
+  fi
+  [[ -s $MARKER ]] || die "run mark before open"
+  need partx
+  need udevadm
+  optional partx --add "$OUT"
+  run udevadm settle
+  [[ $DRY ]] || {
+    MAPPED=
+    lsblk -o NAME,SIZE,TYPE,FSTYPE,RO,MOUNTPOINTS "$OUT"
+  }
+  ;;
+mount)
+  (($# == 2)) || usage
+  DEVICE=$1 MOUNT=$2
+  root
+  for cmd in lsblk blockdev findmnt grep mount; do need "$cmd"; done
+  [[ -b $DEVICE && -d $MOUNT ]] || die "invalid device or mountpoint"
+  findmnt -rn -M "$MOUNT" >/dev/null && die "already mounted: $MOUNT"
+  clone_device "$DEVICE"
+  [[ $(blockdev --getro "$DEVICE") == 1 ]] || die "$DEVICE is not read-only"
+  [[ $(lsblk -dnro FSTYPE "$DEVICE") == ext4 ]] || die "$DEVICE is not ext4"
+  run mount -o ro,noload "$DEVICE" "$MOUNT"
+  ;;
+scan)
+  (($# == 2)) || usage
+  MOUNT=$1 MAP=$2 MARKER=$2.marker
+  [[ -d $MOUNT && -s $MARKER ]] || die "missing mountpoint or marker"
+  for cmd in findmnt grep lsblk; do need "$cmd"; done
+  DEVICE=$(findmnt -no SOURCE -T "$MOUNT")
+  clone_device "$DEVICE"
+  OPTIONS=$(findmnt -no OPTIONS -T "$MOUNT")
+  [[ ,$OPTIONS, == *,ro,* ]] || die "$MOUNT is not read-only"
+  if [[ $DRY ]]; then
+    printf '+ scan %q for marker into %q\n' "$MOUNT" "$MAP.bad"
+    exit
+  fi
+  grep -r -a -l -F -Z --devices=skip -- "$(<"$MARKER")" "$MOUNT" \
+    >"$MAP.bad" 2>"$MAP.scan.log" || [[ $? == 1 ]] ||
+    die "scan failed; inspect $MAP.scan.log"
+  printf 'Bad-file log: %s\nScan log: %s\n' "$MAP.bad" "$MAP.scan.log"
+  ;;
+close)
+  (($# == 0)) || usage
+  root
+  need dmsetup
+  need partx
+  optional partx --delete "$OUT"
+  run dmsetup remove "$NAME"
+  ;;
+*) usage ;;
+esac
+
+# vim: ft=bash

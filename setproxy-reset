@@ -1,0 +1,19 @@
+#!/bin/zsh
+
+unset PROXY_PORT
+unset PROXY_HOST
+unset GW
+unset http_proxy
+unset https_proxy
+unset ALL_PROXY
+unset all_proxy
+unset NO_PROXY
+unset no_proxy
+
+
+git config --global --unset http.proxy 2>/dev/null
+git config --global --unset https.proxy 2>/dev/null
+
+
+npm config delete proxy 2>/dev/null
+npm config delete https-proxy 2>/dev/null

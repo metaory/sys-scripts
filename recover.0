@@ -1,0 +1,72 @@
+#!/bin/bash
+
+set -u
+
+SRC=/home/metaory/mnt
+DST1=/mnt/disk1
+DST2=/mnt/disk2
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+MANIFEST1="$TMP/part1"
+MANIFEST2="$TMP/part2"
+FAILED1="$DST1/failed.txt"
+FAILED2="$DST2/failed.txt"
+
+total=$(
+  find "$SRC" -xdev \( -type f -o -type l \) -printf '%s\n' |
+    awk '{ total += $1 } END { print total + 0 }'
+)
+
+half=$((total / 2))
+current=0
+
+: >"$MANIFEST1"
+: >"$MANIFEST2"
+
+while IFS= read -r -d '' size && IFS= read -r -d '' path; do
+  relative=${path#"$SRC"/}
+
+  if ((current < half)); then
+    printf '%s\0' "$relative" >>"$MANIFEST1"
+    current=$((current + size))
+    continue
+  fi
+
+  printf '%s\0' "$relative" >>"$MANIFEST2"
+done < <(
+  find "$SRC" -xdev \( -type f -o -type l \) -printf '%s\0%p\0'
+)
+
+printf 'Total: %.2f TB\n' "$(awk "BEGIN { print $total / 1000000000000 }")"
+printf 'Part 1: %s files\n' "$(tr -cd '\0' <"$MANIFEST1" | wc -c)"
+printf 'Part 2: %s files\n' "$(tr -cd '\0' <"$MANIFEST2" | wc -c)"
+
+printf '\nCopying part 1...\n'
+
+rsync -a \
+  --from0 \
+  --files-from="$MANIFEST1" \
+  --info=progress2 \
+  "$SRC/" \
+  "$DST1/" 2>&1 | tee "$TMP/rsync1.log"
+
+grep -Ei 'error|failed|input/output|i/o' "$TMP/rsync1.log" >"$FAILED1" || :
+
+printf '\nCopying part 2...\n'
+
+rsync -a \
+  --from0 \
+  --files-from="$MANIFEST2" \
+  --info=progress2 \
+  "$SRC/" \
+  "$DST2/" 2>&1 | tee "$TMP/rsync2.log"
+
+grep -Ei 'error|failed|input/output|i/o' "$TMP/rsync2.log" >"$FAILED2" || :
+
+printf '\nRecovery finished.\n'
+printf 'Failures: %s\n' "$FAILED1"
+printf 'Failures: %s\n' "$FAILED2"
+
+# vim: ft=bash

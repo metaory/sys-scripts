@@ -1,0 +1,142 @@
+#!/bin/bash
+
+set -Eeuo pipefail
+
+DRY=
+[[ ${1-} == -n || ${1-} == --dry-run ]] && {
+  DRY=1
+  shift
+}
+[[ $# == 4 ]] || {
+  printf 'Usage: recover-rsync [--dry-run] SOURCE SSD1 SSD2 LOG\n'
+  exit 2
+}
+
+SRC=${1%/}
+DST1=${2%/}
+DST2=${3%/}
+LOG=$4
+
+((EUID == 0)) || {
+  printf 'Run as root.\n' >&2
+  exit 1
+}
+for path in "$SRC" "$DST1" "$DST2"; do
+  mountpoint -q "$path" || {
+    printf 'Not mounted: %s\n' "$path" >&2
+    exit 1
+  }
+  [[ $(findmnt -no FSTYPE -T "$path") == ext4 ]] ||
+    {
+      printf 'Not ext4: %s\n' "$path" >&2
+      exit 1
+    }
+done
+[[ ,$(findmnt -no OPTIONS -T "$SRC"), == *,ro,* ]] ||
+  {
+    printf 'Source must be read-only.\n' >&2
+    exit 1
+  }
+for path in "$DST1" "$DST2"; do
+  [[ ,$(findmnt -no OPTIONS -T "$path"), == *,rw,* ]] ||
+    {
+      printf 'Destination is read-only: %s\n' "$path" >&2
+      exit 1
+    }
+done
+
+devices=(
+  "$(readlink -f "$(findmnt -no SOURCE -T "$SRC")")"
+  "$(readlink -f "$(findmnt -no SOURCE -T "$DST1")")"
+  "$(readlink -f "$(findmnt -no SOURCE -T "$DST2")")"
+)
+[[ ${devices[0]} != "${devices[1]}" &&
+  ${devices[0]} != "${devices[2]}" &&
+  ${devices[1]} != "${devices[2]}" ]] ||
+  {
+    printf 'All mounts must use different devices.\n' >&2
+    exit 1
+  }
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+MANIFEST1=$LOG.ssd1
+MANIFEST2=$LOG.ssd2
+OVERFLOW=$LOG.overflow
+FIND_RC=0
+
+build() {
+  local inventory=$TMP/inventory
+  local first=$TMP/ssd1 second=$TMP/ssd2 overflow=$TMP/overflow
+  local type size path reserve=$((1024 ** 3))
+  : >"$first"
+  : >"$second"
+  : >"$overflow"
+  find "$SRC" -xdev -printf '%y\0%s\0%P\0' >"$inventory" || FIND_RC=$?
+  FREE1=$(df -B1 --output=avail "$DST1" | awk 'NR == 2 { print $1 }')
+  FREE2=$(df -B1 --output=avail "$DST2" | awk 'NR == 2 { print $1 }')
+  FREE1=$((FREE1 > reserve ? FREE1 - reserve : 0))
+  FREE2=$((FREE2 > reserve ? FREE2 - reserve : 0))
+  while IFS= read -r -d '' type &&
+    IFS= read -r -d '' size &&
+    IFS= read -r -d '' path; do
+    [[ $path ]] || continue
+    if [[ $type == d ]]; then
+      printf '%s\0' "$path" >>"$first"
+      printf '%s\0' "$path" >>"$second"
+      continue
+    fi
+    if ((size <= FREE1 && (FREE1 >= FREE2 || size > FREE2))); then
+      printf '%s\0' "$path" >>"$first"
+      FREE1=$((FREE1 - size))
+      continue
+    fi
+    if ((size <= FREE2)); then
+      printf '%s\0' "$path" >>"$second"
+      FREE2=$((FREE2 - size))
+      continue
+    fi
+    printf '%s\0' "$path" >>"$overflow"
+  done <"$inventory"
+  MANIFEST1=$first MANIFEST2=$second OVERFLOW=$overflow
+  [[ $DRY || $FIND_RC != 0 ]] && return
+  mv "$first" "$LOG.ssd1"
+  mv "$second" "$LOG.ssd2"
+  mv "$overflow" "$LOG.overflow"
+  MANIFEST1=$LOG.ssd1 MANIFEST2=$LOG.ssd2 OVERFLOW=$LOG.overflow
+}
+
+if [[ $DRY || ! -e $MANIFEST1 && ! -e $MANIFEST2 ]]; then
+  build
+else
+  [[ -r $MANIFEST1 && -r $MANIFEST2 ]] ||
+    {
+      printf 'Incomplete persistent manifests.\n' >&2
+      exit 1
+    }
+fi
+
+copy() {
+  local manifest=$1 destination=$2
+  local args=(-aHAXS --numeric-ids --from0 --files-from="$manifest"
+    --info=progress2 "$SRC/" "$destination/")
+  [[ $DRY ]] && args=(--dry-run "${args[@]}")
+  rsync "${args[@]}" 2>&1 | tee -a "$TMP/rsync.log"
+  return "${PIPESTATUS[0]}"
+}
+
+RC1=0
+RC2=0
+copy "$MANIFEST1" "$DST1" || RC1=$?
+copy "$MANIFEST2" "$DST2" || RC2=$?
+
+if [[ -z $DRY ]]; then
+  grep -Ei 'input/output error|read errors|failed to open|failed to stat|vanished' \
+    "$TMP/rsync.log" >"$LOG.bad" || :
+  ((FIND_RC == 0)) || printf 'find exit: %s\n' "$FIND_RC" >>"$LOG.bad"
+  printf 'Bad-file log: %s\nOverflow manifest: %s\n' "$LOG.bad" "$OVERFLOW"
+fi
+
+((RC1 == 0 && RC2 == 0 && FIND_RC == 0))
+
+# vim: ft=bash
