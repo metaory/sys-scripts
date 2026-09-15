@@ -3,26 +3,37 @@
 export PROXY_PORT=10808
 export PROXY_HOST=$(ip -color=never -4 route get 1 | awk 'NR==1 {print $3}')
 
-if [[ -n "$PROXY_HOST" ]]; then
-  export ALL_PROXY="socks5h://$PROXY_HOST:$PROXY_PORT"
-  export {http,https,all}_proxy="$ALL_PROXY"
-  export {HTTP,HTTPS,ALL}_PROXY="$ALL_PROXY"
+[[ -z "$PROXY_HOST" ]] && return
 
-  git config --global http.proxy "$ALL_PROXY"
+export P_URL="socks5h://$PROXY_HOST:$PROXY_PORT"
+export {http,https,all}_proxy="$P_URL"
+export {HTTP,HTTPS,ALL}_PROXY="$P_URL"
+export {no,NO}_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
-  # env -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
-  #   npm config set proxy "http://$PROXY_HOST:10809"
-  
-  # env -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
-  #   npm config set https-proxy "http://$PROXY_HOST:10809"
+git config --global http.proxy "$P_URL"
+git config --global https.proxy "$P_URL"
 
-  # pnpm config set proxy "http://$PROXY_HOST:10809"
-  # pnpm config set https-proxy "http://$PROXY_HOST:10809"
-
-  echo "Proxy set to $ALL_PROXY"
-else
-  unset {http,https,all}_proxy {HTTP,HTTPS,ALL}_PROXY
-  git config --global --unset http.proxy 2>/dev/null
-  npm config delete proxy 2>/dev/null
-  npm config delete https-proxy 2>/dev/null
-fi
+echo "Proxy set to $P_URL"
+#-----
+# export PROXY_PORT=10808
+# export PROXY_HOST=$(ip -color=never -4 route get 1 | awk 'NR==1 {print $3}')
+#
+# if [[ -n "$PROXY_HOST" ]]; then
+#   export ALL_PROXY="socks5h://$PROXY_HOST:$PROXY_PORT"
+#   export {http,https,all}_proxy="$ALL_PROXY"
+#   export {HTTP,HTTPS,ALL}_PROXY="$ALL_PROXY"
+#
+#   git config --global http.proxy "$ALL_PROXY"
+#   git config --global https.proxy "$ALL_PROXY"
+#
+#   # pnpm config set proxy "http://$PROXY_HOST:10809"
+#   # pnpm config set https-proxy "http://$PROXY_HOST:10809"
+#
+#   echo "Proxy set to $ALL_PROXY"
+# else
+#   unset {http,https,all}_proxy {HTTP,HTTPS,ALL}_PROXY
+#   git config --global --unset http.proxy 2>/dev/null
+#   npm config delete proxy 2>/dev/null
+#   npm config delete https-proxy 2>/dev/null
+# fi
+# vim: setf=bash

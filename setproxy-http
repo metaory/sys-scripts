@@ -1,31 +1,41 @@
 #!/bin/zsh
 
+
 export PROXY_PORT=10809
 export PROXY_HOST=$(ip -color=never -4 route get 1 | awk 'NR==1 {print $3}')
 
-if [[ -n "$PROXY_HOST" ]]; then
-  export P_URL="http://$PROXY_HOST:$PROXY_PORT"
-  
-  export {http,https,all}_proxy="$P_URL"
-  export {HTTP,HTTPS,ALL}_PROXY="$P_URL"
-  export {no,NO}_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+[[ -z "$PROXY_HOST" ]] && return
 
-  git config --global http.proxy "$P_URL"
-  git config --global https.proxy "$P_URL"
+export P_URL="http://$PROXY_HOST:$PROXY_PORT"
+export {http,https,all}_proxy="$P_URL"
+export {HTTP,HTTPS,ALL}_PROXY="$P_URL"
+export {no,NO}_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
-  # env -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
-  #   npm config set proxy "$P_URL"
-  
-  # env -u http_proxy -u https_proxy -u ALL_PROXY -u all_proxy \
-  #   npm config set https-proxy "$P_URL"
+git config --global http.proxy "$P_URL"
+git config --global https.proxy "$P_URL"
 
-  echo "Proxy set to $P_URL"
-else
-  unset {http,https,all}_proxy {HTTP,HTTPS,ALL}_PROXY {no,NO}_PROXY
-  git config --global --unset http.proxy 2>/dev/null
-  git config --global --unset https.proxy 2>/dev/null
-  npm config delete proxy 2>/dev/null
-  npm config delete https-proxy 2>/dev/null
-  echo "Proxy unset"
-fi
-
+echo "Proxy set to $P_URL"
+#-----
+# export PROXY_PORT=10809
+# export PROXY_HOST=$(ip -color=never -4 route get 1 | awk 'NR==1 {print $3}')
+#
+# if [[ -n "$PROXY_HOST" ]]; then
+#   export P_URL="http://$PROXY_HOST:$PROXY_PORT"
+#   export {http,https,all}_proxy="$P_URL"
+#   export {HTTP,HTTPS,ALL}_PROXY="$P_URL"
+#   export {no,NO}_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+#
+#   git config --global http.proxy "$P_URL"
+#   git config --global https.proxy "$P_URL"
+#
+#   echo "Proxy set to $P_URL"
+# else
+#   unset {http,https,all}_proxy {HTTP,HTTPS,ALL}_PROXY {no,NO}_PROXY
+#   git config --global --unset http.proxy 2>/dev/null
+#   git config --global --unset https.proxy 2>/dev/null
+#   npm config delete proxy 2>/dev/null
+#   npm config delete https-proxy 2>/dev/null
+#   echo "Proxy unset"
+# fi
+#
+# vim: setf=bash

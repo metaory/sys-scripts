@@ -1,0 +1,21 @@
+#!/bin/bash
+
+path=$1
+
+[[ -d $path ]] && exec eza --tree --color=always "$path"
+[[ -f $path ]] || exit
+
+mime=$(file -Lb --mime-type "$path")
+
+[[ $mime == application/pdf ]] &&
+    exec pdftotext -layout "$path" -
+
+[[ $mime == text/* ]] &&
+    exec bat \
+        --color=always \
+        --style=numbers \
+        --line-range=:500 \
+        --paging=never \
+        "$path"
+
+exec file "$path"
