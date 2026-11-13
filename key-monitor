@@ -1,0 +1,24 @@
+#!/bin/bash
+
+xev -event keyboard | awk '
+/KeyPress event/ { key = "" }
+/keycode/ {
+  match($0, /keysym [^,]+, ([^)]+)/, m)
+  key = m[1]
+  match($0, /state 0x[0-9a-f]+/, s)
+  state = s[0]
+  if (state ~ /0x[1-9a-f]/) {
+    split(state, a, "x")
+    mod = strtonum("0x" a[2])
+    mods = ""
+    if (and(mod, 4))   mods = mods "Ctrl+"
+    if (and(mod, 8))   mods = mods "Alt+"
+    if (and(mod, 1))   mods = mods "Shift+"
+    if (and(mod, 64))  mods = mods "Super+"
+    if (and(mod, 16))  mods = mods "Mod2+"
+    if (and(mod, 32))  mods = mods "Mod3+"
+    if (and(mod, 128)) mods = mods "Mod5+"
+    key = mods key
+  }
+  if (key != "") print key
+}'
