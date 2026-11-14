@@ -1,0 +1,33 @@
+#!/bin/bash
+declare -A K8ENV=([stage]=mvp-staging [prod]=mvp)
+
+_k8ns() {
+  [[ -n $1 ]] && echo "${K8ENV[$1]}" && return
+  printf '%s\n' "${K8ENV[@]}" | gum choose --header env
+}
+
+_k8pick() {
+  local out
+  out=$(gum choose --no-limit --header "$1 pods (x/tab to mark)" <<<"$2") || return 1
+  [[ -n $out ]] && echo "$out" && return
+  _k8pick "$@"
+}
+
+k8pods() {
+  local ns=$(_k8ns "$1")
+  [[ -z $ns ]] && return 1
+  kubectl -n "$ns" get pods
+}
+
+k8logs() {
+  local ns=$(_k8ns "$1")
+  [[ -z $ns ]] && return 1
+  local list=$(kubectl -n "$ns" get pods -o name --field-selector=status.phase=Running)
+  local mode=$(gum choose --header "$ns logs" "view all" "view some")
+  [[ -z $mode ]] && return 1
+  local pods=$list
+  [[ $mode == "view some" ]] && pods=$(_k8pick "$ns" "$list")
+  [[ -z $pods ]] && return 1
+  xargs -P0 -I{} kubectl -n "$ns" logs -f --tail=500 --all-containers --prefix {} <<<"$pods" |
+    tspin | ov -f -w=false
+}
