@@ -1,5 +1,6 @@
 #!/bin/bash
 declare -A K8ENV=([stage]=mvp-staging [prod]=mvp)
+K8OV=$(dirname "$(realpath "${BASH_SOURCE[0]:-$0}")")/ov.yaml
 
 _k8ns() {
   [[ -n $1 ]] && echo "${K8ENV[$1]}" && return
@@ -8,7 +9,8 @@ _k8ns() {
 
 _k8pick() {
   local out
-  out=$(gum choose --no-limit --header "$1 pods (x/tab to mark)" <<<"$2") || return 1
+  out=$(gum filter --no-limit --indicator.background 57 \
+    --cursor-text.background 57 --cursor-text.foreground 231 --header "$1 pods (tab to mark, enter for current)" <<<"$2") || return 1
   [[ -n $out ]] && echo "$out" && return
   _k8pick "$@"
 }
@@ -25,9 +27,14 @@ k8logs() {
   local list=$(kubectl -n "$ns" get pods -o name --field-selector=status.phase=Running)
   local mode=$(gum choose --header "$ns logs" "view all" "view some")
   [[ -z $mode ]] && return 1
-  local pods=$list
-  [[ $mode == "view some" ]] && pods=$(_k8pick "$ns" "$list")
-  [[ -z $pods ]] && return 1
-  xargs -P0 -I{} kubectl -n "$ns" logs -f --tail=500 --all-containers --prefix {} <<<"$pods" |
-    tspin | ov -f -w=false
+  [[ $mode == "view all" ]] && { _k8view "$ns" "$list"; return; }
+  local pods
+  while pods=$(_k8pick "$ns" "$list"); do _k8view "$ns" "$pods"; done
+}
+
+_k8view() {
+  ov --config "$K8OV" -f -w=false < <(
+    xargs -P0 -I{} kubectl -n "$1" logs -f --tail=500 --all-containers --prefix {} <<<"$2" | tspin
+  )
+  pkill -f "kubectl -n $1 logs -f"
 }

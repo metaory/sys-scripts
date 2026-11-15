@@ -1,0 +1,3 @@
+KeyBind:
+  exit: [Escape, q, ctrl+c]
+  cancel: [ctrl+g]
