@@ -1,0 +1,27 @@
+#!/bin/bash
+
+
+function fskill {
+  local ref action
+  ref=$(skills find ${1:?MISSING_QUERRY} |
+  awk '
+    $2 ~ /^[0-9.]+[KMG]?$/ && $3 == "installs" {
+      n = $2
+      unit = substr(n, length(n))
+      factor = unit == "K" ? 1e3 : unit == "M" ? 1e6 : unit == "G" ? 1e9 : 1
+      sub(/[KMG]$/, "", n)
+      printf "%.0f\t%s\t%s\n", n * factor, $2, $1
+    }
+  ' |
+  sort -rn -k1,1 |
+  awk -F '\t' '{ printf "\033[38;5;212m%-6s\033[39m %s\n", $2, $3 }' |
+  gum filter --limit 1 --no-strip-ansi --indicator.background 57 \
+    --cursor-text.background 57 --cursor-text.foreground 231 |
+  awk '{ print $NF }')
+  [[ -z $ref ]] && return
+  skills --help
+  local -A arg=([add]="${ref%@*}" [use]="$ref")
+  gum style --foreground 7 --faint "" "https://skills.sh/${ref/@//}" "" "skills add ${arg[add]}" "skills use ${arg[use]}" ""
+  action=$(gum choose add use) || return
+  skills "$action" "${arg[$action]}"
+}
