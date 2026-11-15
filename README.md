@@ -9,6 +9,20 @@
   Not a package, not a toolkit, just the bin
 </div>
 
+## Setup
+
+Three kinds of scripts:
+
+- **Standalone**, run from `PATH`: `256`, `counter`, `key-monitor`, `preview`, `recover-dd`, `recover-rsync`, `recover.0`
+- **Shell functions**, source once in `~/.bashrc` or `~/.zshrc`: `fskill`, `k8s`
+- **Env setters**, source on demand in the current shell: `setproxy-*`
+
+```sh
+export PATH="$HOME/dev/sys-scripts:$PATH"
+source ~/dev/sys-scripts/fskill
+source ~/dev/sys-scripts/k8s
+```
+
 ## Terminal
 
 ### `256`
@@ -45,10 +59,9 @@ fzf --preview 'preview {}'
 
 ### `fskill`
 
-Sourced helper to search skills, sorted by installs, pick one with `gum` and `add` or `use` it. Needs `skills`, `gum`.
+Shell function, source in rc. Searches skills sorted by installs, pick one with `gum` and `add` or `use` it. Needs `skills`, `gum`.
 
 ```sh
-source fskill
 fskill react
 ```
 
@@ -56,17 +69,16 @@ fskill react
 
 ### `k8s`
 
-Sourced helpers to list pods and tail logs per env (`stage`, `prod`). Needs `kubectl`, `gum`, `tspin`, `ov`.
+Shell functions, source in rc. List pods and tail logs per env (`stage`, `prod`). Needs `kubectl`, `gum`, `tspin`, `ov`.
 
 ```sh
-source k8s
 k8pods stage
 k8logs prod   # pick all or some running pods
 ```
 
 ## Proxy
 
-Sourced, since they export env vars. They also set the global git proxy.
+Source on demand, since they export env vars into the current shell. They also set the global git proxy. Written for zsh.
 
 ### `setproxy-http`
 
