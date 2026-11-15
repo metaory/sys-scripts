@@ -2,7 +2,9 @@
 
 
 function fskill {
-  local ref action
+  local ref action pm
+  pm=$(command -v pnpm >/dev/null && echo pnpm || echo npm)
+  command -v skills >/dev/null || $pm i -g skills || return
   ref=$(skills find ${1:?MISSING_QUERRY} |
   awk '
     $2 ~ /^[0-9.]+[KMG]?$/ && $3 == "installs" {
