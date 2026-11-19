@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Accept bump type as first argument (major, minor, patch). Default to "patch" if not provided.
+BUMP_TYPE="${1:-patch}"
+
+# Validate bump type
+case "$BUMP_TYPE" in
+major | minor | patch)
+  ;; # valid
+*)
+  echo "Invalid bump type: $BUMP_TYPE. Use one of: major, minor, patch." >&2
+  exit 1
+  ;;
+esac
+
+# Perform version bump using cargo set-version
+cargo set-version --bump "$BUMP_TYPE"
+
+# Retrieve the new version from cargo metadata
+VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+
+# Commit changes and tag the new version
+git add Cargo.toml Cargo.lock
+git commit -m "chore(release): v$VERSION"
+git tag -a "v$VERSION" -m "v$VERSION"
+
+git push
+git push origin "v$VERSION"
